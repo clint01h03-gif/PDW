@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Memories – PDW</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="loader">
+    <div class="loader-ring"></div>
+    <div class="loader-text">PDW Loading</div>
+  </div>
+
+  <nav id="navbar">
+    <div class="nav-inner">
+      <a href="index.html" class="logo"><span>PDW</span> Personality Development</a>
+      <ul class="nav-links" id="navLinks">
+        <li><a href="index.html">Home</a></li>
+        <li><a href="about.html">About</a></li>
+        <li><a href="teachers.html">Teachers</a></li>
+        <li><a href="memories.html" class="active">Memories</a></li>
+        <li><a href="https://halfan.vercel.app" target="_blank" rel="noopener" class="btn-dev">👨‍💻 Developer</a></li>
+      </ul>
+      <button class="menu-btn" id="menuBtn" aria-label="Menu">☰</button>
+    </div>
+  </nav>
+
+  <main>
+    <section class="memories">
+      <div class="container">
+        <div class="section-header">
+          <div class="tag">Gallery</div>
+          <h2>Our Memories</h2>
+          <p>Capture and cherish the best moments of the workshop. Add photos — delete or change them anytime.</p>
+        </div>
+
+        <div class="memories-actions">
+          <button class="btn btn-add" id="addBtn">📷 Add Photo</button>
+          <button class="btn btn-clear" id="clearBtn" style="display:none;">🗑️ Clear All</button>
+          <input type="file" id="memoryInput" accept="image/*" multiple hidden />
+          <input type="file" id="replaceInput" accept="image/*" hidden />
+        </div>
+
+        <div class="memories-grid" id="memoriesGrid"></div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <h3>PDW – Personality Development Workshop</h3>
+    <p>Grow into the best version of yourself with guidance, friendship and unforgettable experiences.</p>
+    <div class="footer-links">
+      <a href="index.html">Home</a>
+      <a href="about.html">About</a>
+      <a href="teachers.html">Teachers</a>
+      <a href="memories.html">Memories</a>
+      <a href="https://halfan.vercel.app" target="_blank" rel="noopener">Developer</a>
+    </div>
+    <div class="copyright">
+      © 2026 Personality Development Workshop. All rights reserved.
+    </div>
+  </footer>
+
+  <script src="script.js"></script>
+  <script>
+    const STORAGE_KEY = 'pdw_memories';
+    const grid = document.getElementById('memoriesGrid');
+    const clearBtn = document.getElementById('clearBtn');
+    const addBtn = document.getElementById('addBtn');
+    const input = document.getElementById('memoryInput');
+    const replaceInput = document.getElementById('replaceInput');
+    let replaceIndex = null;
+
+    function getMemories() {
+      try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; }
+      catch { return []; }
+    }
+
+    function saveMemories(arr) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(arr));
+    }
+
+    function renderMemories() {
+      const memories = getMemories();
+      grid.innerHTML = '';
+
+      if (memories.length === 0) {
+        grid.innerHTML = `
+          <div class="empty-memories">
+            <div class="icon">📸</div>
+            <p>No memories yet.<br>Click <strong>Add Photo</strong> to start collecting moments!</p>
+          </div>`;
+        clearBtn.style.display = 'none';
+        return;
+      }
+
+      clearBtn.style.display = 'inline-flex';
+
+      memories.forEach((src, index) => {
+        const card = document.createElement('div');
+        card.className = 'memory-card';
+        card.innerHTML = `
+          <img src="${src}" alt="Memory ${index + 1}" loading="lazy" />
+          <div class="memory-actions">
+            <button class="memory-btn change" title="Change photo" data-index="${index}">✏️</button>
+            <button class="memory-btn delete" title="Delete photo" data-index="${index}">×</button>
+          </div>
+        `;
+        grid.appendChild(card);
+      });
+
+      grid.querySelectorAll('.memory-btn.delete').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const idx = parseInt(btn.dataset.index, 10);
+          if (confirm('Delete this photo?')) {
+            const memories = getMemories();
+            memories.splice(idx, 1);
+            saveMemories(memories);
+            renderMemories();
+          }
+        });
+      });
+
+      grid.querySelectorAll('.memory-btn.change').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          replaceIndex = parseInt(btn.dataset.index, 10);
+          replaceInput.click();
+        });
+      });
+    }
+
+    addBtn.addEventListener('click', () => input.click());
+
+    clearBtn.addEventListener('click', () => {
+      if (confirm('Are you sure you want to delete ALL memories?')) {
+        localStorage.removeItem(STORAGE_KEY);
+        renderMemories();
+      }
+    });
+
+    input.addEventListener('change', (e) => {
+      const files = Array.from(e.target.files);
+      if (!files.length) return;
+      const memories = getMemories();
+      let loaded = 0;
+      const imageFiles = files.filter(f => f.type.startsWith('image/'));
+      imageFiles.forEach(file => {
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          memories.push(ev.target.result);
+          loaded++;
+          if (loaded === imageFiles.length) {
+            saveMemories(memories);
+            renderMemories();
+          }
+        };
+        reader.readAsDataURL(file);
+      });
+      input.value = '';
+    });
+
+    replaceInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file || !file.type.startsWith('image/') || replaceIndex === null) return;
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const memories = getMemories();
+        memories[replaceIndex] = ev.target.result;
+        saveMemories(memories);
+        renderMemories();
+        replaceIndex = null;
+      };
+      reader.readAsDataURL(file);
+      replaceInput.value = '';
+    });
+
+    renderMemories();
+  </script>
+</body>
+</html>
