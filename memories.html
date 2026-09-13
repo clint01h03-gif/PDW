@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Memories – PDW</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-storage-compat.js"></script>
+</head>
+<body>
+  <div id="loader">
+    <div class="loader-ring"></div>
+    <div class="loader-text">PDW Loading</div>
+  </div>
+
+  <nav id="navbar">
+    <div class="nav-inner">
+      <a href="index.html" class="logo"><span>PDW</span> Personality Development</a>
+      <ul class="nav-links" id="navLinks">
+        <li><a href="index.html">Home</a></li>
+        <li><a href="about.html">About</a></li>
+        <li><a href="teachers.html">Teachers</a></li>
+        <li><a href="memories.html" class="active">Memories</a></li>
+        <li><a href="https://halfan.vercel.app" target="_blank" rel="noopener" class="btn-dev">👨‍💻 Developer</a></li>
+      </ul>
+      <button class="menu-btn" id="menuBtn" aria-label="Menu">☰</button>
+    </div>
+  </nav>
+
+  <main>
+    <section class="memories">
+      <div class="container">
+        <div class="section-header">
+          <div class="tag">Gallery</div>
+          <h2>Our Memories</h2>
+          <p>Capture and cherish the best moments of the workshop. Add photos & videos.</p>
+        </div>
+
+        <div class="memories-actions">
+          <button class="btn btn-add" id="addPhotoBtn">📷 Add Photo</button>
+          <button class="btn btn-add" id="addVideoBtn">🎬 Add Video</button>
+          <button class="btn btn-clear" id="clearBtn" style="display:none;">🗑️ Clear All</button>
+          <input type="file" id="photoInput" accept="image/*" multiple hidden />
+          <input type="file" id="videoInput" accept="video/*" multiple hidden />
+          <input type="file" id="replaceInput" accept="image/*,video/*" hidden />
+        </div>
+
+        <div class="memories-grid" id="memoriesGrid"></div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <h3>PDW – Personality Development Workshop</h3>
+    <p>Grow into the best version of yourself with guidance, friendship and unforgettable experiences.</p>
+    <div class="footer-links">
+      <a href="index.html">Home</a>
+      <a href="about.html">About</a>
+      <a href="teachers.html">Teachers</a>
+      <a href="memories.html">Memories</a>
+      <a href="https://halfan.vercel.app" target="_blank" rel="noopener">Developer</a>
+    </div>
+    <div class="copyright">
+      © 2026 Personality Development Workshop. All rights reserved.
+    </div>
+  </footer>
+
+  <script src="script.js"></script>
+  <script>
+    const grid = document.getElementById('memoriesGrid');
+    const clearBtn = document.getElementById('clearBtn');
+    const addPhotoBtn = document.getElementById('addPhotoBtn');
+    const addVideoBtn = document.getElementById('addVideoBtn');
+    const photoInput = document.getElementById('photoInput');
+    const videoInput = document.getElementById('videoInput');
+    const replaceInput = document.getElementById('replaceInput');
+    let replaceId = null;
+    let replaceStoragePath = null;
+
+    let fbReady = false;
+    let fbDb = null;
+    let fbStorage = null;
+
+    async function tryFirebase() {
+      try {
+        const cfg = JSON.parse(localStorage.getItem('pdw_firebase_config') || '{}');
+        if (cfg.mode !== 'firebase' || !cfg.apiKey || !cfg.projectId) return false;
+        if (!firebase.apps.length) {
+          firebase.initializeApp({
+            apiKey: cfg.apiKey,
+            authDomain: cfg.authDomain || cfg.projectId + '.firebaseapp.com',
+            projectId: cfg.projectId,
+            storageBucket: cfg.storageBucket || cfg.projectId + '.appspot.com',
+            messagingSenderId: cfg.messagingSenderId || '',
+            appId: cfg.appId || ''
+          });
+        }
+        fbDb = firebase.firestore();
+        fbStorage = firebase.storage();
+        fbReady = true;
+        return true;
+      } catch (e) {
+        console.warn(e);
+        return false;
+      }
+    }
+
+    async function loadMemories() {
+      if (fbReady && fbDb) {
+        try {
+          const snap = await fbDb.collection('memories').orderBy('created', 'desc').get();
+          return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        } catch (e) {
+          console.warn('FB read fail', e);
+        }
+      }
+      await migrateOldMemories();
+      return getAllMemories();
+    }
+
+    async function saveNewMemory(type, file) {
+      if (fbReady && fbDb && fbStorage) {
+        const path = 'memories/' + Date.now() + '_' + file.name;
+        await fbStorage.ref(path).put(file);
+        const url = await fbStorage.ref(path).getDownloadURL();
+        await fbDb.collection('memories').add({
+          type, data: url, storagePath: path, created: Date.now(), name: file.name
+        });
+        return;
+      }
+      const data = await new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => res(r.result);
+        r.onerror = rej;
+        r.readAsDataURL(file);
+      });
+      await addMemory({ type, data, created: Date.now(), name: file.name });
+    }
+
+    async function removeMemory(id, storagePath) {
+      if (fbReady && fbDb) {
+        try {
+          await fbDb.collection('memories').doc(String(id)).delete();
+          if (storagePath && fbStorage) await fbStorage.ref(storagePath).delete().catch(() => {});
+          return;
+        } catch (e) { console.warn(e); }
+      }
+      await deleteMemory(Number(id) || id);
+    }
+
+    async function clearAll() {
+      if (fbReady && fbDb) {
+        const snap = await fbDb.collection('memories').get();
+        const batch = fbDb.batch();
+        snap.docs.forEach(d => batch.delete(d.ref));
+        await batch.commit();
+        return;
+      }
+      await clearAllMemories();
+    }
+
+    async function renderMemories() {
+      const memories = await loadMemories();
+      grid.innerHTML = '';
+      if (!memories.length) {
+        grid.innerHTML = '<div class="empty-memories"><div class="icon">📸</div><p>No memories yet.<br>Click <strong>Add Photo</strong> or <strong>Add Video</strong>!</p></div>';
+        clearBtn.style.display = 'none';
+        return;
+      }
+      clearBtn.style.display = 'inline-flex';
+      memories.forEach(item => {
+        const card = document.createElement('div');
+        card.className = 'memory-card';
+        if (item.type === 'video') {
+          card.innerHTML = '<video src="' + item.data + '" controls playsinline preload="metadata"></video>' +
+            '<div class="memory-actions">' +
+            '<button class="memory-btn change" title="Change" data-id="' + item.id + '" data-path="' + (item.storagePath || '') + '">✏️</button>' +
+            '<button class="memory-btn delete" title="Delete" data-id="' + item.id + '" data-path="' + (item.storagePath || '') + '">×</button></div>' +
+            '<span class="media-badge">VIDEO</span>';
+        } else {
+          card.innerHTML = '<img src="' + item.data + '" alt="Memory" loading="lazy" />' +
+            '<div class="memory-actions">' +
+            '<button class="memory-btn change" title="Change" data-id="' + item.id + '" data-path="' + (item.storagePath || '') + '">✏️</button>' +
+            '<button class="memory-btn delete" title="Delete" data-id="' + item.id + '" data-path="' + (item.storagePath || '') + '">×</button></div>' +
+            '<span class="media-badge">IMAGE</span>';
+        }
+        grid.appendChild(card);
+      });
+
+      grid.querySelectorAll('.memory-btn.delete').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          if (!confirm('Delete this item?')) return;
+          await removeMemory(btn.dataset.id, btn.dataset.path || '');
+          renderMemories();
+        });
+      });
+      grid.querySelectorAll('.memory-btn.change').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          replaceId = btn.dataset.id;
+          replaceStoragePath = btn.dataset.path || '';
+          replaceInput.click();
+        });
+      });
+    }
+
+    addPhotoBtn.addEventListener('click', () => photoInput.click());
+    addVideoBtn.addEventListener('click', () => videoInput.click());
+    clearBtn.addEventListener('click', async () => {
+      if (!confirm('Delete ALL memories?')) return;
+      await clearAll();
+      renderMemories();
+    });
+
+    photoInput.addEventListener('change', async (e) => {
+      for (const file of Array.from(e.target.files).filter(f => f.type.startsWith('image/'))) {
+        await saveNewMemory('image', file);
+      }
+      e.target.value = '';
+      renderMemories();
+    });
+
+    videoInput.addEventListener('change', async (e) => {
+      for (const file of Array.from(e.target.files).filter(f => f.type.startsWith('video/'))) {
+        if (file.size > 80 * 1024 * 1024) {
+          alert('"' + file.name + '" > 80MB. Compress first.');
+          continue;
+        }
+        await saveNewMemory('video', file);
+      }
+      e.target.value = '';
+      renderMemories();
+    });
+
+    replaceInput.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file || replaceId == null) return;
+      const isVideo = file.type.startsWith('video/');
+      if (!isVideo && !file.type.startsWith('image/')) return;
+      await removeMemory(replaceId, replaceStoragePath);
+      await saveNewMemory(isVideo ? 'video' : 'image', file);
+      replaceId = null;
+      replaceStoragePath = null;
+      e.target.value = '';
+      renderMemories();
+    });
+
+    (async () => {
+      await tryFirebase();
+      renderMemories();
+    })();
+  </script>
+</body>
+</html>

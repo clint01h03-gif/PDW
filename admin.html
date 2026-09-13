@@ -1,0 +1,765 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PDW — Admin System</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet" />
+  <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-storage-compat.js"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            primary: {
+              50:'#fff7ed',100:'#ffedd5',200:'#fed7aa',300:'#fdba74',400:'#fb923c',
+              500:'#FF6B00',600:'#E55A00',700:'#C44A00',800:'#9a3412',900:'#7c2d12'
+            }
+          },
+          fontFamily: {
+            sans: ['Inter','system-ui','sans-serif'],
+            display: ['Playfair Display','serif']
+          },
+          boxShadow: {
+            soft: '0 2px 15px -3px rgba(0,0,0,0.07), 0 10px 20px -2px rgba(0,0,0,0.04)',
+            premium: '0 4px 25px -5px rgba(0,0,0,0.1), 0 10px 10px -5px rgba(0,0,0,0.04)',
+            card: '0 1px 3px 0 rgba(0,0,0,0.05), 0 1px 2px 0 rgba(0,0,0,0.03)'
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    * { scrollbar-width: thin; scrollbar-color: #cbd5e1 transparent; }
+    body { font-family: 'Inter', system-ui, sans-serif; }
+    .sidebar-item { transition: all 0.2s ease; }
+    .sidebar-item:hover { background: rgba(255,107,0,0.08); }
+    .sidebar-item.active {
+      background: linear-gradient(135deg, #FF6B00 0%, #E55A00 100%);
+      color: white;
+      box-shadow: 0 4px 12px rgba(255,107,0,0.3);
+    }
+    .stat-card { transition: all 0.3s cubic-bezier(0.4,0,0.2,1); }
+    .stat-card:hover { transform: translateY(-4px); box-shadow: 0 12px 30px -8px rgba(0,0,0,0.12); }
+    .btn-primary {
+      background: linear-gradient(135deg, #FF6B00 0%, #E55A00 100%);
+      transition: all 0.2s ease;
+    }
+    .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(255,107,0,0.35); }
+    .memory-thumb { width: 100%; height: 160px; object-fit: cover; border-radius: 12px; background: #0f172a; }
+    input:focus, select:focus, textarea:focus {
+      outline: none; border-color: #FF6B00;
+      box-shadow: 0 0 0 3px rgba(255,107,0,0.15);
+    }
+    .loading-spinner {
+      border: 3px solid #e2e8f0; border-top-color: #FF6B00;
+      border-radius: 50%; width: 40px; height: 40px;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .page-section { display: none; }
+    .page-section.active { display: block; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800 antialiased">
+
+  <!-- Loading -->
+  <div id="loading-screen" class="fixed inset-0 z-[100] bg-white flex flex-col items-center justify-center">
+    <div class="text-center">
+      <div class="w-20 h-20 mx-auto mb-6 rounded-2xl bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center shadow-premium">
+        <span class="text-white font-display font-bold text-2xl">PDW</span>
+      </div>
+      <h1 class="font-display text-3xl font-bold text-slate-800 mb-2">PDW Admin</h1>
+      <p class="text-slate-500 text-sm mb-8">Personality Development Workshop</p>
+      <div class="loading-spinner mx-auto"></div>
+    </div>
+  </div>
+
+  <!-- Login -->
+  <div id="login-screen" class="fixed inset-0 z-50 hidden bg-gradient-to-br from-slate-100 via-white to-orange-50 flex items-center justify-center p-4">
+    <div class="w-full max-w-md">
+      <div class="bg-white rounded-2xl shadow-premium p-8 border border-slate-100">
+        <div class="text-center mb-8">
+          <div class="w-16 h-16 mx-auto mb-4 rounded-xl bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center shadow-lg">
+            <span class="text-white font-display font-bold text-xl">PDW</span>
+          </div>
+          <h1 class="font-display text-2xl font-bold text-slate-800">Admin System</h1>
+          <p class="text-slate-500 text-sm mt-1">Sign in to manage the website</p>
+        </div>
+        <form id="login-form" class="space-y-5">
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1.5">Username</label>
+            <div class="relative">
+              <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><i class="fas fa-user"></i></span>
+              <input type="text" id="login-username" required autocomplete="username"
+                class="w-full pl-10 pr-4 py-2.5 rounded-lg border border-slate-200 bg-slate-50 focus:bg-white"
+                placeholder="Enter username" />
+            </div>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1.5">Password</label>
+            <div class="relative">
+              <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><i class="fas fa-lock"></i></span>
+              <input type="password" id="login-password" required autocomplete="current-password"
+                class="w-full pl-10 pr-4 py-2.5 rounded-lg border border-slate-200 bg-slate-50 focus:bg-white"
+                placeholder="Enter password" />
+            </div>
+          </div>
+          <p id="login-error" class="hidden text-sm text-red-600 text-center"></p>
+          <button type="submit" class="w-full btn-primary text-white font-medium py-2.5 rounded-lg">
+            <i class="fas fa-sign-in-alt mr-2"></i>Sign In
+          </button>
+        </form>
+        <p class="text-center text-xs text-slate-400 mt-6">
+          Default: <span class="font-medium text-slate-500">admin / pdw2026</span>
+        </p>
+        <p class="text-center text-xs text-slate-400 mt-2">
+          Or type <code class="bg-slate-100 px-1 rounded">halfan</code> + Enter on the website
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main App -->
+  <div id="main-app" class="hidden min-h-screen flex">
+    <aside id="sidebar" class="w-64 bg-white border-r border-slate-200 flex flex-col fixed h-full z-40 shadow-soft">
+      <div class="p-5 border-b border-slate-100">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center shadow-md">
+            <span class="text-white font-bold text-sm">PDW</span>
+          </div>
+          <div>
+            <h1 class="font-display font-bold text-lg text-slate-800 leading-tight">PDW Admin</h1>
+            <p class="text-xs text-slate-400">Website Control</p>
+          </div>
+        </div>
+      </div>
+      <nav class="flex-1 p-3 space-y-1 overflow-y-auto">
+        <button type="button" data-page="dashboard" class="sidebar-item active w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-left">
+          <i class="fas fa-chart-pie w-5 text-center"></i><span>Dashboard</span>
+        </button>
+        <button type="button" data-page="memories" class="sidebar-item w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-600 text-left">
+          <i class="fas fa-images w-5 text-center"></i><span>Memories</span>
+        </button>
+        <button type="button" data-page="teachers" class="sidebar-item w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-600 text-left">
+          <i class="fas fa-chalkboard-teacher w-5 text-center"></i><span>Teachers</span>
+        </button>
+        <button type="button" data-page="settings" class="sidebar-item w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-600 text-left">
+          <i class="fas fa-cog w-5 text-center"></i><span>Settings</span>
+        </button>
+        <button type="button" data-page="users" class="sidebar-item w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-600 text-left">
+          <i class="fas fa-users-cog w-5 text-center"></i><span>Users</span>
+        </button>
+      </nav>
+      <div class="p-4 border-t border-slate-100">
+        <div class="flex items-center gap-3 mb-3">
+          <div class="w-9 h-9 rounded-full bg-primary-100 flex items-center justify-center">
+            <i class="fas fa-user text-primary-600 text-sm"></i>
+          </div>
+          <div class="flex-1 min-w-0">
+            <p id="current-user-name" class="text-sm font-medium text-slate-800 truncate">Admin</p>
+            <p class="text-xs text-slate-400" id="db-status-label">Local DB</p>
+          </div>
+        </div>
+        <a href="index.html" class="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-50 mb-2">
+          <i class="fas fa-globe"></i><span>View Website</span>
+        </a>
+        <button type="button" id="logout-btn" class="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-medium text-red-600 hover:bg-red-50">
+          <i class="fas fa-sign-out-alt"></i><span>Logout</span>
+        </button>
+      </div>
+    </aside>
+
+    <main class="flex-1 ml-64 min-h-screen">
+      <header class="sticky top-0 z-30 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 py-3 flex items-center justify-between">
+        <div>
+          <h2 id="page-title" class="text-xl font-semibold text-slate-800">Dashboard</h2>
+          <p id="page-subtitle" class="text-sm text-slate-500">Overview of your workshop site</p>
+        </div>
+        <div class="flex items-center gap-3">
+          <span id="fb-badge" class="text-xs font-semibold px-3 py-1 rounded-full bg-slate-100 text-slate-500 border border-slate-200">Local</span>
+          <a href="memories.html" class="btn-primary text-white text-sm font-medium px-4 py-2 rounded-lg flex items-center gap-2">
+            <i class="fas fa-external-link-alt"></i><span>Public Gallery</span>
+          </a>
+        </div>
+      </header>
+
+      <div id="page-content" class="p-6">
+        <!-- DASHBOARD -->
+        <div id="page-dashboard" class="page-section active">
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            <div class="stat-card bg-white rounded-xl p-5 border border-slate-100 shadow-card">
+              <div class="flex items-center gap-4">
+                <div class="w-12 h-12 rounded-xl bg-orange-50 flex items-center justify-center text-primary-600 text-xl"><i class="fas fa-images"></i></div>
+                <div><p class="text-2xl font-bold text-slate-800" id="stat-memories">0</p><p class="text-sm text-slate-500">Memories</p></div>
+              </div>
+            </div>
+            <div class="stat-card bg-white rounded-xl p-5 border border-slate-100 shadow-card">
+              <div class="flex items-center gap-4">
+                <div class="w-12 h-12 rounded-xl bg-blue-50 flex items-center justify-center text-blue-600 text-xl"><i class="fas fa-chalkboard-teacher"></i></div>
+                <div><p class="text-2xl font-bold text-slate-800">6</p><p class="text-sm text-slate-500">Teachers</p></div>
+              </div>
+            </div>
+            <div class="stat-card bg-white rounded-xl p-5 border border-slate-100 shadow-card">
+              <div class="flex items-center gap-4">
+                <div class="w-12 h-12 rounded-xl bg-emerald-50 flex items-center justify-center text-emerald-600 text-xl"><i class="fas fa-users"></i></div>
+                <div><p class="text-2xl font-bold text-slate-800" id="stat-users">0</p><p class="text-sm text-slate-500">Users</p></div>
+              </div>
+            </div>
+            <div class="stat-card bg-white rounded-xl p-5 border border-slate-100 shadow-card">
+              <div class="flex items-center gap-4">
+                <div class="w-12 h-12 rounded-xl bg-amber-50 flex items-center justify-center text-amber-600 text-xl"><i class="fas fa-fire"></i></div>
+                <div><p class="text-2xl font-bold text-slate-800" id="stat-db">Local</p><p class="text-sm text-slate-500">Database</p></div>
+              </div>
+            </div>
+          </div>
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div class="bg-white rounded-xl p-5 border border-slate-100 shadow-card">
+              <h3 class="font-semibold text-slate-800 mb-3">Quick Actions</h3>
+              <div class="flex flex-wrap gap-2">
+                <button type="button" data-goto="memories" class="btn-primary text-white text-sm px-4 py-2 rounded-lg">Manage Memories</button>
+                <button type="button" data-goto="settings" class="px-4 py-2 rounded-lg border border-slate-200 text-sm font-medium text-slate-700 hover:bg-slate-50">Firebase Settings</button>
+                <button type="button" data-goto="users" class="px-4 py-2 rounded-lg border border-slate-200 text-sm font-medium text-slate-700 hover:bg-slate-50">Users</button>
+              </div>
+            </div>
+            <div class="bg-white rounded-xl p-5 border border-slate-100 shadow-card">
+              <h3 class="font-semibold text-slate-800 mb-2">Access tips</h3>
+              <ul class="text-sm text-slate-500 space-y-1.5">
+                <li>• Type <code class="bg-slate-100 px-1 rounded">halfan</code> + Enter on any public page</li>
+                <li>• Double-click the <strong>PDW</strong> logo</li>
+                <li>• Default login: <code class="bg-slate-100 px-1 rounded">admin</code> / <code class="bg-slate-100 px-1 rounded">pdw2026</code></li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- MEMORIES -->
+        <div id="page-memories" class="page-section">
+          <div class="bg-white rounded-xl p-5 border border-slate-100 shadow-card mb-4">
+            <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+              <div>
+                <h3 class="font-semibold text-slate-800">Memories Gallery</h3>
+                <p class="text-sm text-slate-500" id="memories-hint">Photos & videos</p>
+              </div>
+              <div class="flex flex-wrap gap-2">
+                <button type="button" id="btn-add-photo" class="btn-primary text-white text-sm px-4 py-2 rounded-lg"><i class="fas fa-camera mr-1"></i> Add Photo</button>
+                <button type="button" id="btn-add-video" class="btn-primary text-white text-sm px-4 py-2 rounded-lg"><i class="fas fa-video mr-1"></i> Add Video</button>
+                <button type="button" id="btn-clear-mem" class="px-4 py-2 rounded-lg bg-red-50 text-red-600 text-sm font-medium hover:bg-red-100"><i class="fas fa-trash mr-1"></i> Clear All</button>
+              </div>
+            </div>
+            <input type="file" id="input-photo" accept="image/*" multiple class="hidden" />
+            <input type="file" id="input-video" accept="video/*" multiple class="hidden" />
+            <div id="memories-grid" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4"></div>
+          </div>
+        </div>
+
+        <!-- TEACHERS (info) -->
+        <div id="page-teachers" class="page-section">
+          <div class="bg-white rounded-xl p-5 border border-slate-100 shadow-card">
+            <h3 class="font-semibold text-slate-800 mb-2">Teachers</h3>
+            <p class="text-sm text-slate-500 mb-4">Teacher profiles are on the public <a href="teachers.html" class="text-primary-600 font-medium">Teachers page</a>. Photos are in the website folder.</p>
+            <div class="grid grid-cols-2 sm:grid-cols-3 gap-4">
+              <div class="rounded-xl border border-slate-100 overflow-hidden"><img src="MIFRAS.jpg" class="w-full h-36 object-cover" alt=""/><p class="p-2 text-sm font-medium">Mifras</p></div>
+              <div class="rounded-xl border border-slate-100 overflow-hidden"><img src="AMMAR.jpg" class="w-full h-36 object-cover" alt=""/><p class="p-2 text-sm font-medium">Ammar</p></div>
+              <div class="rounded-xl border border-slate-100 overflow-hidden"><img src="SAFRIN.jpg" class="w-full h-36 object-cover" alt=""/><p class="p-2 text-sm font-medium">Safrin</p></div>
+              <div class="rounded-xl border border-slate-100 overflow-hidden"><img src="FATHHI.jpg" class="w-full h-36 object-cover" alt=""/><p class="p-2 text-sm font-medium">Fathhi</p></div>
+              <div class="rounded-xl border border-slate-100 overflow-hidden"><img src="AQEEL.jpg" class="w-full h-36 object-cover" alt=""/><p class="p-2 text-sm font-medium">Aqeel</p></div>
+              <div class="rounded-xl border border-slate-100 overflow-hidden"><img src="NATHEEF.jpg" class="w-full h-36 object-cover" alt=""/><p class="p-2 text-sm font-medium">Natheef</p></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- SETTINGS / FIREBASE -->
+        <div id="page-settings" class="page-section">
+          <div class="bg-white rounded-xl p-5 border border-slate-100 shadow-card max-w-2xl mb-4">
+            <h3 class="font-semibold text-slate-800 mb-1 flex items-center gap-2"><i class="fas fa-fire text-primary-500"></i> Firebase Database</h3>
+            <p class="text-sm text-slate-500 mb-4">
+              Connect like Zero Device cloud setup. Create a project at
+              <a href="https://console.firebase.google.com" target="_blank" class="text-primary-600">Firebase Console</a>,
+              enable <strong>Firestore</strong> + <strong>Storage</strong>, then paste web config.
+            </p>
+            <div class="space-y-3">
+              <div>
+                <label class="block text-xs font-medium text-slate-500 mb-1">Mode</label>
+                <select id="db-mode" class="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm">
+                  <option value="local">Local only (IndexedDB)</option>
+                  <option value="firebase">Firebase (cloud)</option>
+                </select>
+              </div>
+              <div id="fb-fields" class="space-y-3">
+                <div><label class="block text-xs font-medium text-slate-500 mb-1">apiKey</label><input id="fb-apiKey" class="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm" placeholder="AIzaSy..." /></div>
+                <div><label class="block text-xs font-medium text-slate-500 mb-1">authDomain</label><input id="fb-authDomain" class="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm" placeholder="project.firebaseapp.com" /></div>
+                <div><label class="block text-xs font-medium text-slate-500 mb-1">projectId</label><input id="fb-projectId" class="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm" placeholder="project-id" /></div>
+                <div><label class="block text-xs font-medium text-slate-500 mb-1">storageBucket</label><input id="fb-storageBucket" class="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm" placeholder="project.appspot.com" /></div>
+                <div><label class="block text-xs font-medium text-slate-500 mb-1">messagingSenderId</label><input id="fb-messagingSenderId" class="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm" /></div>
+                <div><label class="block text-xs font-medium text-slate-500 mb-1">appId</label><input id="fb-appId" class="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm" /></div>
+              </div>
+              <div class="flex flex-wrap gap-2 pt-2">
+                <button type="button" id="btn-save-fb" class="btn-primary text-white text-sm px-4 py-2 rounded-lg">Save & Connect</button>
+                <button type="button" id="btn-test-fb" class="px-4 py-2 rounded-lg border border-slate-200 text-sm font-medium">Test Connection</button>
+                <button type="button" id="btn-disconnect-fb" class="px-4 py-2 rounded-lg bg-red-50 text-red-600 text-sm font-medium">Disconnect</button>
+              </div>
+              <p id="fb-msg" class="hidden text-sm rounded-lg px-3 py-2"></p>
+            </div>
+          </div>
+          <div class="bg-white rounded-xl p-5 border border-slate-100 shadow-card max-w-2xl">
+            <h3 class="font-semibold text-slate-800 mb-3">Change Password</h3>
+            <form id="change-pass-form" class="space-y-3 max-w-sm">
+              <div><label class="block text-xs font-medium text-slate-500 mb-1">Current</label><input type="password" id="cur-pass" required class="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm" /></div>
+              <div><label class="block text-xs font-medium text-slate-500 mb-1">New</label><input type="password" id="new-pass" required minlength="4" class="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm" /></div>
+              <div><label class="block text-xs font-medium text-slate-500 mb-1">Confirm</label><input type="password" id="confirm-pass" required minlength="4" class="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm" /></div>
+              <button type="submit" class="btn-primary text-white text-sm px-4 py-2 rounded-lg">Update Password</button>
+            </form>
+            <p id="pass-msg" class="hidden text-sm mt-2"></p>
+          </div>
+        </div>
+
+        <!-- USERS -->
+        <div id="page-users" class="page-section">
+          <div class="bg-white rounded-xl p-5 border border-slate-100 shadow-card max-w-2xl mb-4">
+            <h3 class="font-semibold text-slate-800 mb-3">Add User</h3>
+            <form id="add-user-form" class="grid sm:grid-cols-2 gap-3">
+              <div><label class="block text-xs font-medium text-slate-500 mb-1">Username</label><input id="new-username" required minlength="3" class="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm" /></div>
+              <div><label class="block text-xs font-medium text-slate-500 mb-1">Password</label><input type="password" id="new-user-pass" required minlength="4" class="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm" /></div>
+              <div>
+                <label class="block text-xs font-medium text-slate-500 mb-1">Role</label>
+                <select id="new-user-role" class="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm">
+                  <option value="admin">Admin</option>
+                  <option value="editor">Editor</option>
+                </select>
+              </div>
+              <div class="flex items-end"><button type="submit" class="btn-primary text-white text-sm px-4 py-2 rounded-lg w-full sm:w-auto">Add User</button></div>
+            </form>
+            <p id="add-user-msg" class="hidden text-sm mt-2"></p>
+          </div>
+          <div class="bg-white rounded-xl p-5 border border-slate-100 shadow-card max-w-2xl">
+            <h3 class="font-semibold text-slate-800 mb-3">Users</h3>
+            <div id="users-list" class="space-y-2"></div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <div id="toast-box" class="fixed top-4 right-4 z-[90] space-y-2"></div>
+
+  <script src="script.js"></script>
+  <script>
+  (function () {
+    const AUTH_KEY = 'pdw_auth_users';
+    const SESSION_KEY = 'pdw_session';
+    const FB_CFG_KEY = 'pdw_firebase_config';
+
+    let fbConnected = false;
+    let fbDb = null;
+    let fbStorage = null;
+
+    function toast(msg, type) {
+      const box = document.getElementById('toast-box');
+      const el = document.createElement('div');
+      el.className = 'px-4 py-2.5 rounded-lg text-sm font-medium shadow-lg text-white ' + (type === 'error' ? 'bg-red-500' : 'bg-emerald-500');
+      el.textContent = msg;
+      box.appendChild(el);
+      setTimeout(() => el.remove(), 3000);
+    }
+
+    function getUsers() {
+      try {
+        const u = JSON.parse(localStorage.getItem(AUTH_KEY));
+        if (u && u.length) return u;
+      } catch {}
+      const d = [{ username: 'admin', password: 'pdw2026', role: 'admin' }];
+      localStorage.setItem(AUTH_KEY, JSON.stringify(d));
+      return d;
+    }
+    function saveUsers(u) { localStorage.setItem(AUTH_KEY, JSON.stringify(u)); }
+    function getSession() { try { return JSON.parse(sessionStorage.getItem(SESSION_KEY)); } catch { return null; } }
+    function setSession(u) { sessionStorage.setItem(SESSION_KEY, JSON.stringify({ username: u.username, role: u.role })); }
+    function clearSession() { sessionStorage.removeItem(SESSION_KEY); }
+
+    function getFbConfig() { try { return JSON.parse(localStorage.getItem(FB_CFG_KEY) || '{}'); } catch { return {}; } }
+    function saveFbConfig(c) { localStorage.setItem(FB_CFG_KEY, JSON.stringify(c)); }
+
+    async function initFirebase(cfg) {
+      if (!cfg || !cfg.apiKey || !cfg.projectId) { fbConnected = false; updateBadges(); return false; }
+      try {
+        if (firebase.apps.length) await firebase.app().delete().catch(() => {});
+        firebase.initializeApp({
+          apiKey: cfg.apiKey,
+          authDomain: cfg.authDomain || cfg.projectId + '.firebaseapp.com',
+          projectId: cfg.projectId,
+          storageBucket: cfg.storageBucket || cfg.projectId + '.appspot.com',
+          messagingSenderId: cfg.messagingSenderId || '',
+          appId: cfg.appId || ''
+        });
+        fbDb = firebase.firestore();
+        fbStorage = firebase.storage();
+        await fbDb.collection('_pdw_ping').limit(1).get().catch(() => {});
+        fbConnected = true;
+        updateBadges();
+        return true;
+      } catch (e) {
+        console.error(e);
+        fbConnected = false;
+        fbDb = null;
+        fbStorage = null;
+        updateBadges();
+        return false;
+      }
+    }
+
+    function updateBadges() {
+      const badge = document.getElementById('fb-badge');
+      const label = document.getElementById('db-status-label');
+      const stat = document.getElementById('stat-db');
+      const hint = document.getElementById('memories-hint');
+      if (fbConnected) {
+        badge.textContent = 'Firebase ✓';
+        badge.className = 'text-xs font-semibold px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200';
+        if (label) label.textContent = 'Firebase';
+        if (stat) stat.textContent = 'Firebase';
+        if (hint) hint.textContent = 'Saving to Firebase Storage + Firestore';
+      } else {
+        badge.textContent = 'Local';
+        badge.className = 'text-xs font-semibold px-3 py-1 rounded-full bg-slate-100 text-slate-500 border border-slate-200';
+        if (label) label.textContent = 'Local DB';
+        if (stat) stat.textContent = 'Local';
+        if (hint) hint.textContent = 'Saving to browser IndexedDB';
+      }
+    }
+
+    // IndexedDB helpers from script.js: getAllMemories, addMemory, deleteMemory, clearAllMemories, updateMemory
+
+    async function loadMemories() {
+      if (fbConnected && fbDb) {
+        try {
+          const snap = await fbDb.collection('memories').orderBy('created', 'desc').get();
+          return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        } catch (e) { console.warn(e); }
+      }
+      if (typeof getAllMemories === 'function') return getAllMemories();
+      return [];
+    }
+
+    async function saveMemoryFile(type, file) {
+      if (fbConnected && fbDb && fbStorage) {
+        const path = 'memories/' + Date.now() + '_' + file.name;
+        await fbStorage.ref(path).put(file);
+        const url = await fbStorage.ref(path).getDownloadURL();
+        await fbDb.collection('memories').add({ type, data: url, storagePath: path, created: Date.now(), name: file.name });
+        return;
+      }
+      const data = await new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => res(r.result);
+        r.onerror = rej;
+        r.readAsDataURL(file);
+      });
+      await addMemory({ type, data, created: Date.now(), name: file.name });
+    }
+
+    async function removeMemory(id, storagePath) {
+      if (fbConnected && fbDb) {
+        try {
+          await fbDb.collection('memories').doc(String(id)).delete();
+          if (storagePath && fbStorage) await fbStorage.ref(storagePath).delete().catch(() => {});
+          return;
+        } catch (e) { console.warn(e); }
+      }
+      await deleteMemory(Number(id) || id);
+    }
+
+    // Pages
+    const pageMeta = {
+      dashboard: { title: 'Dashboard', sub: 'Overview of your workshop site' },
+      memories: { title: 'Memories', sub: 'Photos and videos gallery' },
+      teachers: { title: 'Teachers', sub: 'Mentor profiles' },
+      settings: { title: 'Settings', sub: 'Firebase database & password' },
+      users: { title: 'Users', sub: 'Admin user management' }
+    };
+
+    function showPage(name) {
+      document.querySelectorAll('.page-section').forEach(p => p.classList.remove('active'));
+      document.querySelectorAll('.sidebar-item').forEach(b => {
+        b.classList.remove('active');
+        b.classList.add('text-slate-600');
+      });
+      const page = document.getElementById('page-' + name);
+      if (page) page.classList.add('active');
+      const btn = document.querySelector('.sidebar-item[data-page="' + name + '"]');
+      if (btn) {
+        btn.classList.add('active');
+        btn.classList.remove('text-slate-600');
+      }
+      const meta = pageMeta[name] || pageMeta.dashboard;
+      document.getElementById('page-title').textContent = meta.title;
+      document.getElementById('page-subtitle').textContent = meta.sub;
+      if (name === 'memories') renderMemories();
+      if (name === 'users') renderUsers();
+      if (name === 'dashboard') refreshStats();
+      if (name === 'settings') loadSettingsForm();
+    }
+
+    document.querySelectorAll('.sidebar-item').forEach(btn => {
+      btn.addEventListener('click', () => showPage(btn.getAttribute('data-page')));
+    });
+    document.querySelectorAll('[data-goto]').forEach(btn => {
+      btn.addEventListener('click', () => showPage(btn.getAttribute('data-goto')));
+    });
+
+    async function refreshStats() {
+      const list = await loadMemories();
+      document.getElementById('stat-memories').textContent = list.length;
+      document.getElementById('stat-users').textContent = getUsers().length;
+      updateBadges();
+    }
+
+    async function renderMemories() {
+      const grid = document.getElementById('memories-grid');
+      const list = await loadMemories();
+      if (!list.length) {
+        grid.innerHTML = '<div class="col-span-full text-center py-12 text-slate-400"><i class="fas fa-images text-3xl mb-2"></i><p>No memories yet</p></div>';
+        return;
+      }
+      grid.innerHTML = list.map(item => `
+        <div class="relative group rounded-xl overflow-hidden border border-slate-100 bg-slate-900">
+          ${item.type === 'video'
+            ? '<video src="' + item.data + '" class="memory-thumb" controls playsinline></video>'
+            : '<img src="' + item.data + '" class="memory-thumb" alt="" />'}
+          <span class="absolute top-2 left-2 text-[10px] font-bold bg-black/60 text-white px-2 py-0.5 rounded">${item.type === 'video' ? 'VIDEO' : 'IMAGE'}</span>
+          <button type="button" data-del="${item.id}" data-path="${item.storagePath || ''}" class="absolute top-2 right-2 w-8 h-8 rounded-full bg-red-500 text-white opacity-0 group-hover:opacity-100 transition-opacity text-sm"><i class="fas fa-times"></i></button>
+        </div>
+      `).join('');
+      grid.querySelectorAll('[data-del]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          if (!confirm('Delete this item?')) return;
+          await removeMemory(btn.dataset.del, btn.dataset.path);
+          renderMemories();
+          refreshStats();
+        });
+      });
+    }
+
+    document.getElementById('btn-add-photo').addEventListener('click', () => document.getElementById('input-photo').click());
+    document.getElementById('btn-add-video').addEventListener('click', () => document.getElementById('input-video').click());
+    document.getElementById('input-photo').addEventListener('change', async (e) => {
+      for (const f of Array.from(e.target.files).filter(x => x.type.startsWith('image/'))) await saveMemoryFile('image', f);
+      e.target.value = '';
+      renderMemories();
+      refreshStats();
+      toast('Photo(s) added');
+    });
+    document.getElementById('input-video').addEventListener('change', async (e) => {
+      for (const f of Array.from(e.target.files).filter(x => x.type.startsWith('video/'))) {
+        if (f.size > 80 * 1024 * 1024) { toast('Video too large (>80MB)', 'error'); continue; }
+        await saveMemoryFile('video', f);
+      }
+      e.target.value = '';
+      renderMemories();
+      refreshStats();
+      toast('Video(s) added');
+    });
+    document.getElementById('btn-clear-mem').addEventListener('click', async () => {
+      if (!confirm('Delete ALL memories?')) return;
+      if (fbConnected && fbDb) {
+        const snap = await fbDb.collection('memories').get();
+        const batch = fbDb.batch();
+        snap.docs.forEach(d => batch.delete(d.ref));
+        await batch.commit();
+      } else {
+        await clearAllMemories();
+      }
+      renderMemories();
+      refreshStats();
+      toast('All cleared');
+    });
+
+    function loadSettingsForm() {
+      const cfg = getFbConfig();
+      document.getElementById('db-mode').value = cfg.mode || 'local';
+      document.getElementById('fb-apiKey').value = cfg.apiKey || '';
+      document.getElementById('fb-authDomain').value = cfg.authDomain || '';
+      document.getElementById('fb-projectId').value = cfg.projectId || '';
+      document.getElementById('fb-storageBucket').value = cfg.storageBucket || '';
+      document.getElementById('fb-messagingSenderId').value = cfg.messagingSenderId || '';
+      document.getElementById('fb-appId').value = cfg.appId || '';
+      document.getElementById('fb-fields').style.display = (cfg.mode === 'firebase') ? 'block' : 'none';
+    }
+    document.getElementById('db-mode').addEventListener('change', (e) => {
+      document.getElementById('fb-fields').style.display = e.target.value === 'firebase' ? 'block' : 'none';
+    });
+
+    function showFbMsg(text, ok) {
+      const el = document.getElementById('fb-msg');
+      el.className = 'text-sm rounded-lg px-3 py-2 ' + (ok ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600');
+      el.textContent = text;
+      el.classList.remove('hidden');
+    }
+
+    function readFbForm() {
+      return {
+        mode: document.getElementById('db-mode').value,
+        apiKey: document.getElementById('fb-apiKey').value.trim(),
+        authDomain: document.getElementById('fb-authDomain').value.trim(),
+        projectId: document.getElementById('fb-projectId').value.trim(),
+        storageBucket: document.getElementById('fb-storageBucket').value.trim(),
+        messagingSenderId: document.getElementById('fb-messagingSenderId').value.trim(),
+        appId: document.getElementById('fb-appId').value.trim()
+      };
+    }
+
+    document.getElementById('btn-save-fb').addEventListener('click', async () => {
+      const cfg = readFbForm();
+      saveFbConfig(cfg);
+      if (cfg.mode === 'firebase') {
+        const ok = await initFirebase(cfg);
+        showFbMsg(ok ? 'Firebase connected! Memories save to cloud.' : 'Connect failed. Check config & enable Firestore/Storage.', ok);
+      } else {
+        fbConnected = false;
+        updateBadges();
+        showFbMsg('Using Local IndexedDB.', true);
+      }
+      refreshStats();
+    });
+    document.getElementById('btn-test-fb').addEventListener('click', async () => {
+      const cfg = readFbForm();
+      if (!cfg.apiKey || !cfg.projectId) { showFbMsg('Fill apiKey and projectId', false); return; }
+      showFbMsg('Testing...', true);
+      const ok = await initFirebase({ ...cfg, mode: 'firebase' });
+      showFbMsg(ok ? 'Connection OK — click Save & Connect to keep.' : 'Connection failed.', ok);
+    });
+    document.getElementById('btn-disconnect-fb').addEventListener('click', () => {
+      const cfg = getFbConfig();
+      cfg.mode = 'local';
+      saveFbConfig(cfg);
+      fbConnected = false;
+      updateBadges();
+      document.getElementById('db-mode').value = 'local';
+      document.getElementById('fb-fields').style.display = 'none';
+      showFbMsg('Disconnected. Local mode.', true);
+      refreshStats();
+    });
+
+    document.getElementById('change-pass-form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const session = getSession();
+      const users = getUsers();
+      const me = users.find(u => u.username === session.username);
+      const msg = document.getElementById('pass-msg');
+      if (!me || me.password !== document.getElementById('cur-pass').value) {
+        msg.className = 'text-sm mt-2 text-red-600';
+        msg.textContent = 'Wrong current password';
+        msg.classList.remove('hidden');
+        return;
+      }
+      if (document.getElementById('new-pass').value !== document.getElementById('confirm-pass').value) {
+        msg.className = 'text-sm mt-2 text-red-600';
+        msg.textContent = 'Passwords do not match';
+        msg.classList.remove('hidden');
+        return;
+      }
+      me.password = document.getElementById('new-pass').value;
+      saveUsers(users);
+      msg.className = 'text-sm mt-2 text-emerald-600';
+      msg.textContent = 'Password updated';
+      msg.classList.remove('hidden');
+      e.target.reset();
+      toast('Password updated');
+    });
+
+    function renderUsers() {
+      const list = document.getElementById('users-list');
+      list.innerHTML = getUsers().map(u => `
+        <div class="flex items-center justify-between p-3 rounded-lg bg-slate-50">
+          <div>
+            <p class="text-sm font-medium text-slate-800">${u.username}</p>
+            <p class="text-xs text-slate-400">${u.role}</p>
+          </div>
+          ${u.username !== 'admin'
+            ? '<button type="button" data-del-user="' + u.username + '" class="text-red-500 text-sm"><i class="fas fa-trash"></i></button>'
+            : '<span class="text-xs text-slate-400">Protected</span>'}
+        </div>
+      `).join('');
+      list.querySelectorAll('[data-del-user]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          if (!confirm('Delete user?')) return;
+          saveUsers(getUsers().filter(u => u.username !== btn.dataset.delUser));
+          renderUsers();
+          refreshStats();
+        });
+      });
+    }
+
+    document.getElementById('add-user-form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const username = document.getElementById('new-username').value.trim();
+      const password = document.getElementById('new-user-pass').value;
+      const role = document.getElementById('new-user-role').value;
+      const msg = document.getElementById('add-user-msg');
+      const users = getUsers();
+      if (users.some(u => u.username === username)) {
+        msg.className = 'text-sm mt-2 text-red-600';
+        msg.textContent = 'Username exists';
+        msg.classList.remove('hidden');
+        return;
+      }
+      users.push({ username, password, role });
+      saveUsers(users);
+      msg.className = 'text-sm mt-2 text-emerald-600';
+      msg.textContent = 'User added';
+      msg.classList.remove('hidden');
+      e.target.reset();
+      renderUsers();
+      refreshStats();
+      toast('User added');
+    });
+
+    document.getElementById('logout-btn').addEventListener('click', () => {
+      clearSession();
+      location.href = 'index.html';
+    });
+
+    document.getElementById('login-form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const user = document.getElementById('login-username').value.trim();
+      const pass = document.getElementById('login-password').value;
+      const found = getUsers().find(u => u.username === user && u.password === pass);
+      const err = document.getElementById('login-error');
+      if (!found) {
+        err.textContent = 'Invalid username or password';
+        err.classList.remove('hidden');
+        return;
+      }
+      setSession(found);
+      err.classList.add('hidden');
+      enterApp(found);
+    });
+
+    function enterApp(user) {
+      document.getElementById('login-screen').classList.add('hidden');
+      document.getElementById('main-app').classList.remove('hidden');
+      document.getElementById('current-user-name').textContent = user.username;
+      showPage('dashboard');
+      refreshStats();
+    }
+
+    // Boot
+    window.addEventListener('load', async () => {
+      setTimeout(() => document.getElementById('loading-screen').classList.add('hidden'), 600);
+      const cfg = getFbConfig();
+      if (cfg.mode === 'firebase') await initFirebase(cfg);
+      const session = getSession();
+      if (session) {
+        enterApp(session);
+      } else {
+        document.getElementById('login-screen').classList.remove('hidden');
+      }
+    });
+  })();
+  </script>
+</body>
+</html>
