@@ -11,6 +11,36 @@
   <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-storage-compat.js"></script>
+  <style>
+    #uploadProgress {
+      display: none;
+      max-width: 420px;
+      margin: 16px auto 0;
+      text-align: center;
+    }
+    #uploadProgress.show { display: block; }
+    #uploadProgress .bar-wrap {
+      height: 10px;
+      background: rgba(255,255,255,0.12);
+      border-radius: 999px;
+      overflow: hidden;
+      margin-top: 8px;
+    }
+    #uploadProgress .bar {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #FF6B00, #ff9a3c);
+      border-radius: 999px;
+      transition: width 0.25s ease;
+    }
+    #uploadProgress .pct {
+      color: #ffb36b;
+      font-size: 14px;
+      font-weight: 600;
+      margin-top: 6px;
+    }
+    .memory-card .memory-actions { display: none !important; }
+  </style>
 </head>
 <body>
   <div id="loader">
@@ -44,10 +74,13 @@
         <div class="memories-actions">
           <button class="btn btn-add" id="addPhotoBtn">📷 Add Photo</button>
           <button class="btn btn-add" id="addVideoBtn">🎬 Add Video</button>
-          <button class="btn btn-clear" id="clearBtn" style="display:none;">🗑️ Clear All</button>
           <input type="file" id="photoInput" accept="image/*" multiple hidden />
           <input type="file" id="videoInput" accept="video/*" multiple hidden />
-          <input type="file" id="replaceInput" accept="image/*,video/*" hidden />
+        </div>
+
+        <div id="uploadProgress">
+          <div class="pct" id="uploadPct">Uploading… 0%</div>
+          <div class="bar-wrap"><div class="bar" id="uploadBar"></div></div>
         </div>
 
         <div class="memories-grid" id="memoriesGrid"></div>
@@ -73,95 +106,110 @@
   <script src="script.js"></script>
   <script>
     const grid = document.getElementById('memoriesGrid');
-    const clearBtn = document.getElementById('clearBtn');
     const addPhotoBtn = document.getElementById('addPhotoBtn');
     const addVideoBtn = document.getElementById('addVideoBtn');
     const photoInput = document.getElementById('photoInput');
     const videoInput = document.getElementById('videoInput');
-    const replaceInput = document.getElementById('replaceInput');
-    let replaceId = null;
-    let replaceStoragePath = null;
+    const progressBox = document.getElementById('uploadProgress');
+    const uploadBar = document.getElementById('uploadBar');
+    const uploadPct = document.getElementById('uploadPct');
 
-    let fbReady = false;
-    let fbDb = null;
-    let fbStorage = null;
-
-    async function tryFirebase() {
-      try {
-        const cfg = JSON.parse(localStorage.getItem('pdw_firebase_config') || '{}');
-        if (cfg.mode !== 'firebase' || !cfg.apiKey || !cfg.projectId) return false;
-        if (!firebase.apps.length) {
-          firebase.initializeApp({
-            apiKey: cfg.apiKey,
-            authDomain: cfg.authDomain || cfg.projectId + '.firebaseapp.com',
-            projectId: cfg.projectId,
-            storageBucket: cfg.storageBucket || cfg.projectId + '.appspot.com',
-            messagingSenderId: cfg.messagingSenderId || '',
-            appId: cfg.appId || ''
-          });
-        }
-        fbDb = firebase.firestore();
-        fbStorage = firebase.storage();
-        fbReady = true;
-        return true;
-      } catch (e) {
-        console.warn(e);
-        return false;
+    function setProgress(p, label) {
+      progressBox.classList.add('show');
+      const pct = Math.max(0, Math.min(100, Math.round(p)));
+      uploadBar.style.width = pct + '%';
+      uploadPct.textContent = (label || 'Uploading…') + ' ' + pct + '%';
+      if (pct >= 100) {
+        setTimeout(() => progressBox.classList.remove('show'), 800);
       }
+    }
+
+    function hideProgress() {
+      progressBox.classList.remove('show');
+      uploadBar.style.width = '0%';
+    }
+
+    async function ensureFb() {
+      const cfg = (window.PDWFirebase && PDWFirebase.getConfig()) || {};
+      if (!cfg.apiKey) return false;
+      if (PDWFirebase.isConnected()) return true;
+      const r = await PDWFirebase.connect(cfg);
+      return r.ok;
     }
 
     async function loadMemories() {
-      if (fbReady && fbDb) {
+      if (await ensureFb()) {
         try {
-          const snap = await fbDb.collection('memories').orderBy('created', 'desc').get();
-          return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+          const list = await PDWFirebase.listMemories();
+          if (list !== null) return list;
         } catch (e) {
-          console.warn('FB read fail', e);
+          console.warn(e);
         }
       }
-      await migrateOldMemories();
-      return getAllMemories();
+      try {
+        if (typeof migrateOldMemories === 'function') await migrateOldMemories();
+        if (typeof getAllMemories === 'function') return await getAllMemories();
+      } catch (_) {}
+      return [];
     }
 
-    async function saveNewMemory(type, file) {
-      if (fbReady && fbDb && fbStorage) {
-        const path = 'memories/' + Date.now() + '_' + file.name;
-        await fbStorage.ref(path).put(file);
-        const url = await fbStorage.ref(path).getDownloadURL();
-        await fbDb.collection('memories').add({
-          type, data: url, storagePath: path, created: Date.now(), name: file.name
-        });
-        return;
-      }
-      const data = await new Promise((res, rej) => {
-        const r = new FileReader();
-        r.onload = () => res(r.result);
-        r.onerror = rej;
-        r.readAsDataURL(file);
+    // Compress + save image directly (no Storage hang)
+    async function compressAndSaveImage(file, onProgress) {
+      onProgress(10, 'Compressing…');
+      const maxSide = 1280;
+      const quality = 0.8;
+      const blob = await new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        img.onload = () => {
+          URL.revokeObjectURL(url);
+          let w = img.width, h = img.height;
+          if (w > maxSide || h > maxSide) {
+            if (w > h) { h = Math.round(h * maxSide / w); w = maxSide; }
+            else { w = Math.round(w * maxSide / h); h = maxSide; }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = w;
+          canvas.height = h;
+          canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+          canvas.toBlob((b) => b ? resolve(b) : reject(new Error('compress failed')), 'image/jpeg', quality);
+        };
+        img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('image load failed')); };
+        img.src = url;
       });
-      await addMemory({ type, data, created: Date.now(), name: file.name });
+
+      onProgress(40, 'Preparing…');
+      const dataUrl = await new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(r.result);
+        r.onerror = reject;
+        r.readAsDataURL(blob);
+      });
+
+      onProgress(60, 'Uploading…');
+      const ok = await ensureFb();
+      if (!ok) throw new Error('Firebase not connected');
+
+      onProgress(75, 'Saving…');
+      const db = PDWFirebase.getDb();
+      await db.collection('memories').add({
+        type: 'image',
+        data: dataUrl,
+        created: Date.now(),
+        name: file.name || 'photo.jpg',
+        source: 'firestore-embed'
+      });
+      onProgress(100, 'Done');
     }
 
-    async function removeMemory(id, storagePath) {
-      if (fbReady && fbDb) {
-        try {
-          await fbDb.collection('memories').doc(String(id)).delete();
-          if (storagePath && fbStorage) await fbStorage.ref(storagePath).delete().catch(() => {});
-          return;
-        } catch (e) { console.warn(e); }
-      }
-      await deleteMemory(Number(id) || id);
-    }
-
-    async function clearAll() {
-      if (fbReady && fbDb) {
-        const snap = await fbDb.collection('memories').get();
-        const batch = fbDb.batch();
-        snap.docs.forEach(d => batch.delete(d.ref));
-        await batch.commit();
-        return;
-      }
-      await clearAllMemories();
+    async function saveVideo(file, onProgress) {
+      onProgress(5, 'Uploading video…');
+      const ok = await ensureFb();
+      if (!ok) throw new Error('Firebase not connected');
+      // Use PDWFirebase with progress simulation
+      onProgress(30, 'Uploading…');
+      await PDWFirebase.addMemory('video', file);
+      onProgress(100, 'Done');
     }
 
     async function renderMemories() {
@@ -169,91 +217,79 @@
       grid.innerHTML = '';
       if (!memories.length) {
         grid.innerHTML = '<div class="empty-memories"><div class="icon">📸</div><p>No memories yet.<br>Click <strong>Add Photo</strong> or <strong>Add Video</strong>!</p></div>';
-        clearBtn.style.display = 'none';
         return;
       }
-      clearBtn.style.display = 'inline-flex';
       memories.forEach(item => {
         const card = document.createElement('div');
         card.className = 'memory-card';
         if (item.type === 'video') {
-          card.innerHTML = '<video src="' + item.data + '" controls playsinline preload="metadata"></video>' +
-            '<div class="memory-actions">' +
-            '<button class="memory-btn change" title="Change" data-id="' + item.id + '" data-path="' + (item.storagePath || '') + '">✏️</button>' +
-            '<button class="memory-btn delete" title="Delete" data-id="' + item.id + '" data-path="' + (item.storagePath || '') + '">×</button></div>' +
+          card.innerHTML =
+            '<video src="' + item.data + '" controls playsinline preload="metadata"></video>' +
             '<span class="media-badge">VIDEO</span>';
         } else {
-          card.innerHTML = '<img src="' + item.data + '" alt="Memory" loading="lazy" />' +
-            '<div class="memory-actions">' +
-            '<button class="memory-btn change" title="Change" data-id="' + item.id + '" data-path="' + (item.storagePath || '') + '">✏️</button>' +
-            '<button class="memory-btn delete" title="Delete" data-id="' + item.id + '" data-path="' + (item.storagePath || '') + '">×</button></div>' +
+          card.innerHTML =
+            '<img src="' + item.data + '" alt="Memory" loading="lazy" />' +
             '<span class="media-badge">IMAGE</span>';
         }
         grid.appendChild(card);
-      });
-
-      grid.querySelectorAll('.memory-btn.delete').forEach(btn => {
-        btn.addEventListener('click', async (e) => {
-          e.stopPropagation();
-          if (!confirm('Delete this item?')) return;
-          await removeMemory(btn.dataset.id, btn.dataset.path || '');
-          renderMemories();
-        });
-      });
-      grid.querySelectorAll('.memory-btn.change').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          replaceId = btn.dataset.id;
-          replaceStoragePath = btn.dataset.path || '';
-          replaceInput.click();
-        });
       });
     }
 
     addPhotoBtn.addEventListener('click', () => photoInput.click());
     addVideoBtn.addEventListener('click', () => videoInput.click());
-    clearBtn.addEventListener('click', async () => {
-      if (!confirm('Delete ALL memories?')) return;
-      await clearAll();
-      renderMemories();
-    });
 
     photoInput.addEventListener('change', async (e) => {
-      for (const file of Array.from(e.target.files).filter(f => f.type.startsWith('image/'))) {
-        await saveNewMemory('image', file);
+      const files = Array.from(e.target.files || []).filter(f => f.type.startsWith('image/'));
+      if (!files.length) return;
+      addPhotoBtn.disabled = true;
+      addVideoBtn.disabled = true;
+      try {
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i];
+          const base = files.length > 1 ? (i + 1) + '/' + files.length + ' — ' : '';
+          await compressAndSaveImage(file, (p, label) => setProgress(p, base + (label || 'Uploading…')));
+        }
+        await renderMemories();
+      } catch (err) {
+        hideProgress();
+        alert('Photo failed: ' + (err.message || err));
       }
       e.target.value = '';
-      renderMemories();
+      addPhotoBtn.disabled = false;
+      addVideoBtn.disabled = false;
     });
 
     videoInput.addEventListener('change', async (e) => {
-      for (const file of Array.from(e.target.files).filter(f => f.type.startsWith('video/'))) {
-        if (file.size > 80 * 1024 * 1024) {
-          alert('"' + file.name + '" > 80MB. Compress first.');
-          continue;
+      const files = Array.from(e.target.files || []).filter(f => f.type.startsWith('video/'));
+      if (!files.length) return;
+      addPhotoBtn.disabled = true;
+      addVideoBtn.disabled = true;
+      try {
+        for (const file of files) {
+          if (file.size > 80 * 1024 * 1024) {
+            alert('"' + file.name + '" > 80MB. Compress first.');
+            continue;
+          }
+          await saveVideo(file, setProgress);
         }
-        await saveNewMemory('video', file);
+        await renderMemories();
+      } catch (err) {
+        hideProgress();
+        alert('Video failed: ' + (err.message || err));
       }
       e.target.value = '';
-      renderMemories();
-    });
-
-    replaceInput.addEventListener('change', async (e) => {
-      const file = e.target.files[0];
-      if (!file || replaceId == null) return;
-      const isVideo = file.type.startsWith('video/');
-      if (!isVideo && !file.type.startsWith('image/')) return;
-      await removeMemory(replaceId, replaceStoragePath);
-      await saveNewMemory(isVideo ? 'video' : 'image', file);
-      replaceId = null;
-      replaceStoragePath = null;
-      e.target.value = '';
-      renderMemories();
+      addPhotoBtn.disabled = false;
+      addVideoBtn.disabled = false;
     });
 
     (async () => {
-      await tryFirebase();
-      renderMemories();
+      try {
+        await ensureFb();
+      } catch (_) {}
+      await renderMemories();
+      // hide loader if still visible
+      const loader = document.getElementById('loader');
+      if (loader) loader.classList.add('hidden');
     })();
   </script>
 </body>
