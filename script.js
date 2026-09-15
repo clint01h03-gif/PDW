@@ -1,3 +1,4 @@
+
 // ========== PDW Core Script ==========
 // Loading screen
 window.addEventListener('load', () => {
@@ -480,13 +481,65 @@ window.PDWFirebase = (function () {
     });
   }
 
+  // Compress image so Firestore embed always works fast (no hang)
+  async function compressImage(file, maxSide, quality) {
+    maxSide = maxSide || 1280;
+    quality = quality || 0.82;
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        let w = img.width, h = img.height;
+        if (w > maxSide || h > maxSide) {
+          if (w > h) { h = Math.round(h * maxSide / w); w = maxSide; }
+          else { w = Math.round(w * maxSide / h); h = maxSide; }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        canvas.toBlob((blob) => {
+          if (!blob) return reject(new Error('compress failed'));
+          resolve(new File([blob], (file.name || 'photo').replace(/\.\w+$/, '.jpg'), { type: 'image/jpeg' }));
+        }, 'image/jpeg', quality);
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('image load failed')); };
+      img.src = url;
+    });
+  }
+
   async function addMemory(type, file) {
     if (!connected || !db) throw new Error('Firebase not connected');
 
     const created = Date.now();
     const name = file.name || 'file';
 
-    // Prefer Storage for media
+    // ===== IMAGES: fast Firestore embed (no Storage hang) =====
+    if (type === 'image') {
+      try {
+        let uploadFile = file;
+        if (file.size > 200 * 1024 || !(file.type || '').includes('jpeg')) {
+          uploadFile = await compressImage(file, 1280, 0.8);
+        }
+        if (uploadFile.size > 900 * 1024) {
+          uploadFile = await compressImage(file, 960, 0.7);
+        }
+        let dataUrl = await readFileAsDataURL(uploadFile);
+        if (dataUrl.length > 900000) {
+          uploadFile = await compressImage(file, 720, 0.6);
+          dataUrl = await readFileAsDataURL(uploadFile);
+        }
+        const docRef = await db.collection('memories').add({
+          type, data: dataUrl, created, name, source: 'firestore-embed'
+        });
+        return docRef.id;
+      } catch (embedErr) {
+        console.warn('Firestore embed failed, trying Storage', embedErr);
+      }
+    }
+
+    // ===== Storage (videos + image fallback) with 15s timeout =====
     if (storage) {
       try {
         if (isFileProtocol()) {
@@ -494,51 +547,44 @@ window.PDWFirebase = (function () {
         }
         const path = 'memories/' + created + '_' + name.replace(/[^a-zA-Z0-9._-]/g, '_');
         const ref = storage.ref(path);
-        // metadata helps some rule setups
-        await ref.put(file, { contentType: file.type || (type === 'video' ? 'video/mp4' : 'image/jpeg') });
+        const putPromise = ref.put(file, { contentType: file.type || (type === 'video' ? 'video/mp4' : 'image/jpeg') });
+        await Promise.race([
+          putPromise,
+          new Promise((_, rej) => setTimeout(() => rej(new Error('Storage upload timeout')), 15000))
+        ]);
         const url = await ref.getDownloadURL();
         const docRef = await db.collection('memories').add({
-          type,
-          data: url,
-          storagePath: path,
-          created,
-          name,
-          source: 'storage'
+          type, data: url, storagePath: path, created, name, source: 'storage'
         });
         return docRef.id;
       } catch (storageErr) {
-        console.warn('Storage upload failed, trying Firestore fallback', storageErr);
-        // Fallback: embed small images in Firestore (max ~700KB safe)
-        if (type === 'image' && file.size < 700 * 1024) {
-          const dataUrl = await readFileAsDataURL(file);
-          const docRef = await db.collection('memories').add({
-            type,
-            data: dataUrl,
-            created,
-            name,
-            source: 'firestore-embed',
-            storageError: (storageErr && storageErr.message) || 'storage failed'
-          });
-          return docRef.id;
+        console.warn('Storage upload failed', storageErr);
+        if (type === 'image') {
+          try {
+            const small = await compressImage(file, 640, 0.55);
+            const dataUrl = await readFileAsDataURL(small);
+            const docRef = await db.collection('memories').add({
+              type, data: dataUrl, created, name, source: 'firestore-embed',
+              storageError: (storageErr && storageErr.message) || 'storage failed'
+            });
+            return docRef.id;
+          } catch (_) {}
         }
         let msg = (storageErr && storageErr.message) || String(storageErr);
-        if (msg.includes('permission') || storageErr.code === 'storage/unauthorized') {
+        if (msg.includes('permission') || (storageErr && storageErr.code === 'storage/unauthorized')) {
           msg = 'Storage permission denied. Set Storage Rules to allow write in test mode.';
         }
         if (msg.includes('cors') || msg.includes('CORS') || isFileProtocol()) {
-          msg = 'Storage blocked. Host the site (Live Server / Vercel / Netlify), do not open as file://';
+          msg = 'Storage blocked. Host the site, do not open as file://';
+        }
+        if (msg.includes('timeout')) {
+          msg = 'Upload timeout. Try a smaller photo, or set Storage Rules in Firebase Console.';
         }
         throw new Error(msg);
       }
     }
 
-    // No storage instance — embed if small image
-    if (type === 'image' && file.size < 700 * 1024) {
-      const dataUrl = await readFileAsDataURL(file);
-      const docRef = await db.collection('memories').add({ type, data: dataUrl, created, name, source: 'firestore-embed' });
-      return docRef.id;
-    }
-    throw new Error('Storage not available and file too large for Firestore embed');
+    throw new Error('Could not save photo. Check Firebase connection.');
   }
 
   async function deleteMemory(id, storagePath) {
